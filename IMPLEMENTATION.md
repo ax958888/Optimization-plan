@@ -76,7 +76,10 @@ async def _generate_daily_digest(self):
 - [ ] 23:30 Taipei 自動觸發收集
 - [ ] Kanban SQLite 查詢正確回傳當日任務
 - [ ] daily_digest.json 寫入 `/root/.kiro/learning/daily/`
-- [ ] #alkaid 收到 @mention + 摘要
+- [ ] Discord API `channel.history()` 正確拉取 #alkaid 最近 24h 對話
+- [ ] 用戶糾正/Bot 錯誤/❌ reaction 偵測正確
+- [ ] insights.db errors 表有 source='alkaid_chat' 記錄
+- [ ] #alkaid 收到 @mention + 摘要 (含 Chat Analysis 區塊)
 - [ ] Alkaid Kiro CLI 被觸發，輸出分析報告
 - [ ] #archive 收到 Daily Learning Digest embed
 

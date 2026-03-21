@@ -22,14 +22,14 @@
 | 通知 | Telegram | **Discord (#archive + #alkaid)** |
 | 向量搜尋 | OpenAI Embedding (付費) | **QMD 本地向量搜尋 (免費)** |
 | 去重 | 自建 cosine similarity | **QMD BM25 + semantic search** |
-| 資料來源 | conversations.jsonl only | **Kanban SQLite + conversations.jsonl + #archive** |
+| 資料來源 | conversations.jsonl only | **Kanban SQLite + #alkaid 對話歷史 + conversations.jsonl** |
 | 學習寫入 | 自建 insights.db | **Kiro .learnings/ (原生) + insights.db (擴充)** |
 | 排程 | crontab | **Bot 內建 discord.ext.tasks** |
 | 審核 | Telegram 手動 | **Discord CONFIRM + GitHub PR** |
 
 ### 核心功能
 
-1. **每日自動收集** — Kanban Bot 從 SQLite 收集當日完成/失敗/超時任務
+1. **每日自動收集** — Kanban Bot 從 SQLite 收集任務 + 從 #alkaid Discord API 收集對話錯誤
 2. **智能錯誤分析** — Alkaid agent (claude-sonnet-4.5) 分析根因並識別模式
 3. **自動學習寫入** — 新知識寫入 `.learnings/`，QMD 更新向量索引
 4. **學習閉環** — 下次 alkaid 接到類似任務時，pre-check skill 自動命中歷史解決方案
@@ -44,6 +44,8 @@
 ┌─ 收集層 (Kanban Bot, 23:30 Taipei) ─────────────────┐
 │                                                       │
 │  Kanban SQLite: done/failed/timeout tasks             │
+│  #alkaid Discord API: 最近 24h 對話歷史              │
+│  ├── 用戶糾正信號、Bot 錯誤回應、失敗 reaction      │
 │  conversations.jsonl: Kiro 對話 (last 24h)            │
 │  → daily_digest.json                                  │
 │                                                       │
@@ -113,6 +115,7 @@
 
 ### Phase 1: 收集 + 分析 (Week 1)
 - Kanban Bot 加入 daily digest collector
+- Discord API 收集 #alkaid 對話歷史 (用戶糾正/Bot 錯誤/失敗 reaction)
 - 在 #alkaid @mention Alkaid 觸發分析
 - 結果發到 #archive
 
@@ -137,6 +140,21 @@
 ## 學習閉環示意
 
 ```
+Day 1: #alkaid 用戶糾正 "不對，應該用 -n openclaw"
+                                    │
+                    ┌───────────────┘
+                    ▼
+        23:30 Daily Analysis
+        → 偵測到 user_correction 信號
+        → Alkaid 分析: "kubectl 指令預設 namespace 應為 openclaw"
+        → 寫入 .learnings/LEARNINGS.md
+        → qmd embed → 向量索引更新
+
+Day 3: 類似問題 → pre-check skill 命中 → 直接用正確 namespace
+        → 不再犯同樣錯誤
+
+---
+
 Day 1: Task #15 "helm upgrade" → failed (PVC full)
                                     │
                     ┌───────────────┘
@@ -174,7 +192,7 @@ Optimization-plan/
 │
 ├── src/
 │   ├── config.py                # 配置管理
-│   ├── collector.py             # 資料收集器 (Kanban SQLite + JSONL)
+│   ├── collector.py             # 資料收集器 (Kanban SQLite + #alkaid 對話 + JSONL)
 │   ├── analyzer.py              # 錯誤模式分析器
 │   ├── learner.py               # 學習引擎 (Kiro CLI 驅動)
 │   ├── optimizer.py             # Prompt 優化器 (GitHub PR)
@@ -214,6 +232,15 @@ MIT License — Copyright (c) 2026 ax958888
 ---
 
 ## 更新日誌
+
+### v2.1.0 (2026-03-21)
+- 補強: 加入 #alkaid 頻道對話歷史收集 (Discord API channel.history)
+- 補強: 用戶糾正信號偵測 ("不對"、"錯了"、"should be")
+- 補強: Bot 錯誤回應偵測 ("Error:"、"timed out"、"failed")
+- 補強: 失敗/成功 reaction 分析 (❌/✅)
+- 補強: 無任務但有對話錯誤時仍觸發學習
+- 補強: insights.db errors 表支援 source='alkaid_chat'
+- 補強: #archive embed 新增 Chat Errors 欄位
 
 ### v2.0.0 (2026-03-21)
 - 完全重構：從獨立系統 → 嵌入現有 CPX31 Bot 生態

@@ -21,7 +21,8 @@
 │  │  ├── Orchestrator (自動閉環)                        │ │
 │  │  ├── #archive embed (已啟用)                        │ │
 │  │  ├── collector.py (NEW: 每日 23:30 收集)            │ │
-│  │  └── analyzer.py (NEW: 錯誤模式分析)               │ │
+│  │  ├── analyzer.py (NEW: 錯誤模式分析)               │ │
+│  │  └── chat_analyzer (NEW: #alkaid 對話錯誤收集)     │ │
 │  │                                                     │ │
 │  │  alkaid-bot  ←── 學習層 (本方案新增)                │ │
 │  │  ├── Kiro CLI (claude-sonnet-4.5)                   │ │
@@ -88,11 +89,12 @@
 
 **讀取**:
 - `kanban.db` → 當日 tasks (done/failed/timeout)
-- `conversations.jsonl` → 最近 24h 對話
+- `#alkaid` Discord API `channel.history(limit=200, after=24h)` → 用戶對話
+- `conversations.jsonl` → 最近 24h Kiro 對話
 
 **寫入**:
 - `/root/.kiro/learning/daily/YYYY-MM-DD.json`
-- `insights.db` → errors, patterns, statistics
+- `insights.db` → errors (source='kanban' + source='alkaid_chat'), patterns, statistics
 
 **通知**:
 - `#alkaid` @mention Alkaid Bot (附 digest 摘要)

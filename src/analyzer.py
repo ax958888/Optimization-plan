@@ -180,3 +180,96 @@ class Analyzer:
                     agent, s["total"], s["success_rate"] * 100, s["avg_duration"]))
 
         return "\n".join(lines)
+
+
+# Chat-specific patterns (for #alkaid Discord channel analysis)
+CHAT_CORRECTION_KEYWORDS_EN = [
+    "wrong", "incorrect", "should be", "not right", "no no",
+    "try again", "redo", "that is not",
+]
+CHAT_CORRECTION_KEYWORDS_ZH = [
+    "\u4e0d\u5c0d",  # 不對
+    "\u932f\u4e86",  # 錯了
+    "\u4e0d\u662f",  # 不是
+    "\u61c9\u8a72\u662f",  # 應該是
+    "\u91cd\u65b0",  # 重新
+    "\u518d\u4f86\u4e00\u6b21",  # 再來一次
+]
+CHAT_BOT_ERROR_KEYWORDS = ["Error:", "timed out", "failed", "Timed out"]
+
+
+class ChatAnalyzer:
+    """Analyzes #alkaid Discord channel conversations for learning signals.
+
+    Note: Actual Discord API collection is done in orchestrator.py.
+    This class provides the analysis logic that can also be used standalone.
+    """
+
+    def analyze(self, conversations):
+        """
+        Analyze conversation list from Discord channel.history().
+
+        Args:
+            conversations: list of dicts with keys:
+                timestamp, author, author_id, is_bot, content, reactions
+
+        Returns:
+            Analysis dict with errors, stats
+        """
+        if not conversations:
+            return {"total_messages": 0, "user_messages": 0, "bot_messages": 0,
+                    "errors": [], "error_count": 0, "success_count": 0}
+
+        user_msgs = [c for c in conversations if not c.get("is_bot")]
+        bot_msgs = [c for c in conversations if c.get("is_bot")]
+        errors = []
+        success_count = 0
+
+        # User corrections
+        for msg in user_msgs:
+            text_lower = msg.get("content", "").lower()
+            text_orig = msg.get("content", "")
+            is_correction = (
+                any(kw in text_lower for kw in CHAT_CORRECTION_KEYWORDS_EN)
+                or any(kw in text_orig for kw in CHAT_CORRECTION_KEYWORDS_ZH)
+            )
+            if is_correction:
+                errors.append({
+                    "type": "user_correction",
+                    "source": "alkaid_chat",
+                    "content": text_orig[:300],
+                    "timestamp": msg.get("timestamp", ""),
+                })
+
+        # Bot errors
+        for msg in bot_msgs:
+            content = msg.get("content", "")
+            if any(kw in content for kw in CHAT_BOT_ERROR_KEYWORDS):
+                errors.append({
+                    "type": "bot_error",
+                    "source": "alkaid_chat",
+                    "content": content[:300],
+                    "timestamp": msg.get("timestamp", ""),
+                })
+
+            # Reaction-based signals
+            reactions = msg.get("reactions", [])
+            if "\u274c" in reactions:  # ❌
+                errors.append({
+                    "type": "execution_failure",
+                    "source": "alkaid_chat",
+                    "content": content[:300],
+                    "timestamp": msg.get("timestamp", ""),
+                })
+            if "\u2705" in reactions:  # ✅
+                success_count += 1
+
+        return {
+            "total_messages": len(conversations),
+            "user_messages": len(user_msgs),
+            "bot_messages": len(bot_msgs),
+            "errors": errors,
+            "error_count": len(errors),
+            "success_count": success_count,
+        }
+

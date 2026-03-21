@@ -8,9 +8,9 @@
 │                     Kanban Bot (每日 23:30 Taipei)               │
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ┌─────────────────────┐  ┌─────────────────────────────────┐   │
-│  │  Kanban SQLite      │  │  Kiro conversations.jsonl       │   │
-│  │  (kanban.db)        │  │  (/root/.kiro/memory/)          │   │
+│  ┌───────────────┐  ┌──────────────────┐  ┌──────────────┐  │
+│  │ Kanban SQLite │  │ #alkaid Discord  │  │ Kiro JSONL   │  │
+│  │ (kanban.db)   │  │ API history(24h) │  │ (memory/)    │  │
 │  │                     │  │                                 │   │
 │  │  tasks:             │  │  Recent 24h conversations:      │   │
 │  │  - done             │  │  - user_message                 │   │
@@ -55,6 +55,12 @@
 │  │     ├── Success rate by agent                            │    │
 │  │     ├── Average duration by task type                    │    │
 │  │     └── Failure pattern clustering                       │    │
+│  │                                                          │    │
+│  │  4. #alkaid Chat Analysis (NEW)                          │    │
+│  │     ├── User correction signals ("不對", "should be")    │    │
+│  │     ├── Bot error responses ("Error:", "timed out")      │    │
+│  │     ├── Failed reactions (❌)                             │    │
+│  │     └── Successful interactions (✅ count)                │    │
 │  │                                                          │    │
 │  │  → analysis_result.json                                  │    │
 │  └──────────────────────────────────────────────────────────┘   │
@@ -233,7 +239,7 @@ Task Completed/Failed
 
 | 層次 | v1 (原方案) | v2 (本方案) |
 |------|------------|------------|
-| 收集 | conversations.jsonl only | **Kanban SQLite + JSONL + #archive** |
+| 收集 | conversations.jsonl only | **Kanban SQLite + #alkaid 對話 + JSONL** |
 | 分析 | 獨立 Python analyzer | **Kanban Bot 內建 + @mention Alkaid** |
 | 學習 | OpenAI API call | **Kiro CLI alkaid agent (原生)** |
 | 去重 | OpenAI Embedding + cosine | **QMD 本地向量搜尋 (免費)** |

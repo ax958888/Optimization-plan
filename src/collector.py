@@ -2,7 +2,12 @@
 """
 Alkaid Self-Optimization System v2 — Collector
 Collects daily task data from Kanban SQLite + Kiro conversations.
+Also collects #alkaid Discord channel conversations via channel.history() API.
 Runs inside Kanban Bot at 23:30 Taipei.
+
+Note: The Discord API chat collection (_collect_alkaid_conversations) is
+implemented directly in orchestrator.py since it requires the Bot instance
+for channel.history() access. This module handles the file-based sources.
 """
 import json
 import sqlite3
