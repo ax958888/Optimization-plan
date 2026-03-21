@@ -1,137 +1,88 @@
 #!/usr/bin/env python3
 """
-Alkaid Learning System - Scheduler Module
-調度器：管理定時任務和工作流編排
+Alkaid Self-Optimization System v2 — Scheduler
+Designed to run inside Kanban Bot as a discord.ext.tasks loop.
+NOT a standalone cron job.
+
+This module provides the scheduling logic that should be integrated
+into kanban-kiro-bot/services/orchestrator.py
 """
 
-import sys
-from pathlib import Path
-from datetime import datetime
 
-# 添加 src 到 Python path
-sys.path.insert(0, str(Path(__file__).parent))
+INTEGRATION_GUIDE = """
+# Integration into Kanban Bot
 
-from analyzer import Analyzer
-from learner import Learner
-from config import Config
+Add the following to kanban-kiro-bot/services/orchestrator.py:
 
+```python
+from discord.ext import tasks
+from datetime import datetime, timezone, timedelta
 
-class Scheduler:
-    """任務調度器"""
-    
-    def __init__(self):
-        """初始化調度器"""
-        if not Config.validate():
-            raise ValueError("Configuration validation failed")
-        
-        self.analyzer = Analyzer()
-        self.learner = Learner()
-    
-    def daily_analysis(self):
-        """每日分析流程"""
-        print("="*60)
-        print(f"🔍 Daily Analysis - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("="*60)
-        
-        # 1. 分析最近 24 小時對話
-        print("\n[1/3] Analyzing conversations...")
-        results = self.analyzer.analyze_recent(hours=24)
-        
-        if not results['errors'] and not results['patterns']:
-            print("✅ No errors found - system running smoothly!")
-            return
-        
-        # 2. 調用學習引擎
-        print("\n[2/3] Generating insights...")
-        insights = self.learner.analyze(results)
-        
-        # 3. 發送通知
-        print("\n[3/3] Sending notification...")
-        if insights:
-            self._send_notification(insights)
-        
-        print("\n✅ Daily analysis completed")
-        print(f"   Generated {len(insights)} improvement suggestions")
-        print("   Run `python3 src/learner.py --review` to review")
-    
-    def weekly_optimization(self):
-        """每週優化流程"""
-        print("="*60)
-        print(f"📊 Weekly Optimization - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("="*60)
-        
-        # 1. 統計本週數據
-        print("\n[1/3] Collecting weekly statistics...")
-        results = self.analyzer.analyze_recent(hours=24*7)
-        
-        # 2. 生成週報
-        print("\n[2/3] Generating weekly report...")
-        self._generate_weekly_report(results)
-        
-        # 3. 發送通知
-        print("\n[3/3] Sending weekly summary...")
-        print("✅ Weekly optimization completed")
-    
-    def _send_notification(self, insights: list):
-        """發送 Telegram 通知"""
-        # TODO: 實現 Telegram 通知
-        print(f"📱 [Mock] Telegram notification sent: {len(insights)} new insights")
-    
-    def _generate_weekly_report(self, results: dict):
-        """生成週報"""
-        stats = results['statistics']
-        
-        report = f"""
-# 📊 Alkaid 學習週報
+TZ_TAIPEI = timezone(timedelta(hours=8))
 
-**時間**: {datetime.now().strftime('%Y-%m-%d')}
+class Orchestrator:
+    # ... existing code ...
 
-## 統計數據
-- 總對話數: {stats['total_conversations']}
-- 錯誤次數: {stats['error_count']}
-- 用戶修正: {stats['correction_count']}
-- 成功率: {stats['success_rate']:.1%}
+    @tasks.loop(seconds=30)
+    async def daily_digest_scheduler(self):
+        now = datetime.now(TZ_TAIPEI)
+        # Daily at 23:30 Taipei
+        if now.hour == 23 and now.minute == 30:
+            await self._generate_daily_digest()
+        # Weekly report on Sunday at 23:30
+        if now.hour == 23 and now.minute == 30 and now.weekday() == 6:
+            await self._generate_weekly_report()
 
-## 發現的模式
-{len(results['patterns'])} 個常見任務類型
+    @daily_digest_scheduler.before_loop
+    async def before_digest_scheduler(self):
+        await self.bot.wait_until_ready()
 
-## 下週建議
-繼續觀察錯誤模式，優化高頻任務處理流程。
+    async def _generate_daily_digest(self):
+        from src.collector import Collector
+        from src.analyzer import Analyzer
+        from src.notifier import DiscordNotifier
+
+        collector = Collector(
+            kanban_db_path=DB_PATH,
+            memory_path=MEMORY_PATH,
+            output_dir=DAILY_DIR,
+        )
+        digest = collector.collect_daily()
+
+        if digest['total_tasks'] == 0:
+            return  # Skip if no tasks today
+
+        analyzer = Analyzer()
+        analysis = analyzer.analyze(digest)
+
+        # @mention Alkaid in #alkaid with digest
+        alkaid_channel = self.bot.get_channel(ALKAID_CHANNEL_ID)
+        formatted = analyzer.format_for_alkaid(analysis)
+        await alkaid_channel.send(
+            "<@%d> Daily Learning Digest\\n```\\n%s\\n```"
+            % (ALKAID_BOT_ID, formatted)
+        )
+
+    async def _generate_weekly_report(self):
+        from src.learner import Learner
+        from src.notifier import DiscordNotifier
+
+        learner = Learner(insights_db_path=INSIGHTS_DB_PATH)
+        stats = learner.get_weekly_statistics()
+
+        notifier = DiscordNotifier(
+            self.bot, ARCHIVE_CHANNEL_ID, ALKAID_CHANNEL_ID)
+        await notifier.send_weekly_report_embed(stats, "Weekly auto-report")
+
+        # Create GitHub Issue
+        # ... (use GitHubAPI from alkaid-bot or aiohttp directly)
+```
+
+Then in bot.py, start the scheduler:
+```python
+bot.orchestrator.daily_digest_scheduler.start()
+```
 """
-        
-        print(report)
-        
-        # 保存到文件
-        report_path = Config.LEARNING_PATH / 'reports' / f'weekly_{datetime.now().strftime("%Y%m%d")}.md'
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(report)
-        print(f"📄 Report saved to: {report_path}")
 
-
-def main():
-    """命令行入口"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='Alkaid Task Scheduler')
-    parser.add_argument('--mode', choices=['daily', 'weekly'], default='daily',
-                       help='Execution mode')
-    parser.add_argument('--dry-run', action='store_true',
-                       help='Dry run without saving')
-    
-    args = parser.parse_args()
-    
-    try:
-        scheduler = Scheduler()
-        
-        if args.mode == 'daily':
-            scheduler.daily_analysis()
-        elif args.mode == 'weekly':
-            scheduler.weekly_optimization()
-    
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        sys.exit(1)
-
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    print(INTEGRATION_GUIDE)

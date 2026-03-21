@@ -1,519 +1,331 @@
-# 📋 實施計劃
+# 實施計畫
 
-## 項目時間線
+## 時間線
 
 ```
-Week 1-2: 基礎設施搭建
-Week 3-4: 錯誤學習循環
-Week 5-6: Prompt 自動優化
-Week 7+:  任務自主分解
-```
-
----
-
-## 階段 1：基礎設施 (Week 1-2)
-
-### 目標
-建立資料庫、解析器、基礎工具鏈
-
-### 任務清單
-
-#### Day 1-2: 環境準備
-- [ ] 在 VPS 創建 `~/.kiro/learning/` 目錄
-- [ ] 安裝 Python 依賴：`pip install openai pyyaml`
-- [ ] 初始化 SQLite 資料庫：`python scripts/setup.py`
-- [ ] 測試讀取 `conversations.jsonl`
-
-```bash
-# 執行命令
-ssh hetzner "mkdir -p ~/.kiro/learning"
-scp -r src/ hetzner:~/.kiro/learning/
-ssh hetzner "cd ~/.kiro/learning && python3 scripts/setup.py"
-```
-
-#### Day 3-5: 開發 Analyzer
-- [ ] 實現 JSONL 解析器
-- [ ] 編寫錯誤檢測邏輯
-  - SSH 超時檢測
-  - Kubectl 錯誤識別
-  - 用戶修正信號（"不對"、"錯了"）
-- [ ] 實現模式統計功能
-
-**測試命令**：
-```bash
-python3 src/analyzer.py --test --input sample.jsonl
-```
-
-**預期輸出**：
-```json
-{
-  "errors_found": 5,
-  "patterns": [
-    {"type": "ssh_timeout", "count": 3},
-    {"type": "kubectl_not_found", "count": 2}
-  ]
-}
-```
-
-#### Day 6-7: 建立存儲層
-- [ ] 創建 SQLite Schema（`schema/insights.sql`）
-- [ ] 實現 DAO 層（Database Access Object）
-- [ ] 編寫資料庫遷移腳本
-
-**測試命令**：
-```bash
-python3 scripts/migrate_db.py --init
-sqlite3 ~/.kiro/learning/insights.db ".schema"
+Phase 1 (Week 1):   收集 + 分析基礎
+Phase 2 (Week 2-3): 學習閉環 + QMD 整合
+Phase 3 (Week 4):   週報 + GitHub PR
+Phase 4 (Week 5+):  任務分解模板
 ```
 
 ---
 
-## 階段 2：錯誤學習循環 (Week 3-4)
+## Phase 1: 收集 + 分析 (Week 1)
 
 ### 目標
-實現從錯誤中自動學習並生成改進建議
+Kanban Bot 每日 23:30 自動收集當日任務資料，分析錯誤模式，觸發 Alkaid 學習。
 
-### 任務清單
+### 需修改的檔案
 
-#### Day 8-10: 開發 Learner
-- [ ] 整合 OpenAI API
-- [ ] 編寫 LLM Prompt 模板
-- [ ] 實現批次處理邏輯
-- [ ] 開發語義去重功能
+| 檔案 | 修改內容 |
+|------|----------|
+| `/root/kanban-kiro-bot/services/orchestrator.py` | 加入 daily digest scheduler + collector 邏輯 |
+| `/root/kanban-kiro-bot/models/database.py` | 新增 `get_tasks_by_date()` 查詢方法 |
+| `/root/kanban-kiro-bot/bot.py` | 啟動 daily_digest_scheduler task loop |
+| `/root/alkaid-bot/bot.py` | 在 on_message 中識別 Kanban Bot 的 @mention digest，觸發 Kiro CLI 分析 |
 
-**核心代碼**：
+### 新增的檔案
+
+| 檔案 | 內容 |
+|------|------|
+| `/root/.kiro/learning/insights.db` | SQLite 學習資料庫 (由 setup.py 初始化) |
+| `/root/.kiro/learning/daily/` | 每日 digest JSON 存放目錄 |
+
+### Kanban Bot 新增功能
+
 ```python
-# src/learner.py
-class Learner:
-    def analyze_errors(self, errors: List[dict]) -> List[Insight]:
-        prompt = self.build_prompt(errors)
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        return self.parse_insights(response)
+# orchestrator.py 新增
+@tasks.loop(seconds=30)
+async def daily_digest_scheduler(self):
+    now = datetime.now(TZ_TAIPEI)
+    if now.hour == 23 and now.minute == 30:
+        await self._generate_daily_digest()
+
+async def _generate_daily_digest(self):
+    # 1. Query today's tasks from kanban.db
+    today = datetime.now(TZ_TAIPEI).strftime("%Y-%m-%d")
+    tasks = await self.db.get_tasks_by_date(today)
+
+    if not tasks:
+        return  # 無任務，跳過
+
+    # 2. Read recent conversations.jsonl
+    conversations = read_recent_conversations(hours=24)
+
+    # 3. Run analyzer
+    analysis = analyze(tasks, conversations)
+
+    # 4. Save daily digest JSON
+    save_digest(today, analysis)
+
+    # 5. Save to insights.db
+    save_statistics(today, analysis)
+
+    # 6. @mention Alkaid in #alkaid with summary
+    channel = self.bot.get_channel(ALKAID_CHANNEL_ID)
+    await channel.send(
+        f"<@{ALKAID_BOT_ID}> Daily Learning Digest — {today}\n"
+        f"Tasks: {analysis['done']} done, {analysis['failed']} failed\n"
+        f"Errors detected: {analysis['error_count']}\n"
+        f"Please analyze and update .learnings/"
+    )
 ```
 
-#### Day 11-12: 實現 Notifier
-- [ ] Telegram Bot 整合
-- [ ] 通知模板設計
-- [ ] 測試消息發送
-
-**測試命令**：
-```bash
-python3 src/notifier.py --test --message "測試通知"
-```
-
-#### Day 13-14: 端到端測試
-- [ ] 運行完整分析流程
-- [ ] 驗證 insights 存入資料庫
-- [ ] 確認 Telegram 通知發送
-
-**執行流程**：
-```bash
-# 1. 手動觸發分析
-python3 src/scheduler.py --mode daily
-
-# 2. 查看生成的建議
-python3 src/learner.py --review
-
-# 3. 批准一個建議
-python3 src/learner.py --approve 1
-```
+### 驗收標準
+- [ ] 23:30 Taipei 自動觸發收集
+- [ ] Kanban SQLite 查詢正確回傳當日任務
+- [ ] daily_digest.json 寫入 `/root/.kiro/learning/daily/`
+- [ ] #alkaid 收到 @mention + 摘要
+- [ ] Alkaid Kiro CLI 被觸發，輸出分析報告
+- [ ] #archive 收到 Daily Learning Digest embed
 
 ---
 
-## 階段 3：Prompt 自動優化 (Week 5-6)
+## Phase 2: 學習閉環 + QMD (Week 2-3)
 
 ### 目標
-分析成功對話，優化 IDENTITY.md
+Alkaid 接收分析結果後，自動：
+1. 透過 QMD 搜尋去重（避免重複學習）
+2. 寫入 `.learnings/` (ERRORS.md, LEARNINGS.md)
+3. 更新 QMD 向量索引
+4. 記錄改進建議到 insights.db
 
-### 任務清單
+### Alkaid Bot 修改
 
-#### Day 15-17: 開發 Optimizer
-- [ ] 實現文件讀寫模組
-- [ ] 編寫 diff 生成邏輯
-- [ ] 開發草稿管理系統
-
-**核心功能**：
 ```python
-# src/optimizer.py
-class Optimizer:
-    def optimize_identity(self, patterns: List[Pattern]) -> Draft:
-        # 1. 讀取現有 IDENTITY.md
-        current = self.read_file("~/.kiro/steering/IDENTITY.md")
-        
-        # 2. 調用 LLM 生成優化版本
-        optimized = self.generate_optimized_version(current, patterns)
-        
-        # 3. 生成 diff
-        diff = self.create_diff(current, optimized)
-        
-        # 4. 保存草稿
-        return self.save_draft(optimized, diff)
+# alkaid-bot/bot.py on_message 新增
+async def on_message(self, message):
+    # ... 既有邏輯 ...
+
+    # 偵測 Kanban Bot 的 Daily Digest @mention
+    if message.author.id == KANBAN_BOT_ID and "Daily Learning Digest" in message.content:
+        await self._process_daily_digest(message)
+        return
+
+async def _process_daily_digest(self, message):
+    # 1. 提取 digest 內容
+    # 2. 構建 Kiro CLI prompt:
+    prompt = """
+    分析以下每日任務摘要，執行學習流程：
+
+    {digest_content}
+
+    步驟：
+    1. 對每個 failed/timeout 任務，識別根因
+    2. 執行 `qmd search "{error_keyword}" -c alkaid` 檢查是否已知問題
+    3. 如果是新問題，寫入 /root/.kiro/.learnings/ERRORS.md
+    4. 提煉通用解決方案，寫入 /root/.kiro/.learnings/LEARNINGS.md
+    5. 執行 `qmd embed -c alkaid` 更新向量索引
+    6. 輸出分析報告（繁體中文）：
+       - 今日統計
+       - 新學到的知識
+       - 改進建議
+    """
+    output = await self.kiro.run(prompt, timeout=300)
+
+    # 3. 發送到 #alkaid
+    # 4. 發送 embed 到 #archive
+    # 5. 記錄到 insights.db
 ```
 
-#### Day 18-19: GitHub 整合
-- [ ] 配置 GitHub API Token
-- [ ] 實現自動 PR 創建
-- [ ] 測試 PR 工作流
+### QMD 去重邏輯
 
-**測試命令**：
-```bash
-python3 src/optimizer.py --create-pr --draft-id 5
+```python
+# src/qmd_dedup.py
+async def is_known_error(error_description: str) -> bool:
+    """Check if this error pattern is already in QMD index."""
+    proc = await asyncio.create_subprocess_exec(
+        "qmd", "search", error_description, "-c", "alkaid", "--limit", "3",
+        stdout=asyncio.subprocess.PIPE)
+    stdout, _ = await proc.communicate()
+    results = parse_qmd_output(stdout)
+    # If top result similarity > 0.85, consider it known
+    return any(r.score > 0.85 for r in results)
 ```
 
-#### Day 20-21: 週報生成
-- [ ] 統計本週學習數據
-- [ ] 生成 Markdown 報告
-- [ ] 自動發送到 Telegram
+### 驗收標準
+- [ ] Alkaid 接收 Kanban digest 後自動觸發 Kiro CLI
+- [ ] QMD search 去重正確運作（不重複記錄已知問題）
+- [ ] `.learnings/ERRORS.md` 有新內容追加
+- [ ] `.learnings/LEARNINGS.md` 有新知識寫入
+- [ ] `qmd embed -c alkaid` 成功更新索引
+- [ ] insights.db improvements 表有新記錄
+- [ ] #archive 有 Daily Learning Digest embed
 
-**報告示例**：
+---
+
+## Phase 3: 週報 + GitHub PR (Week 4)
+
+### 目標
+每週日自動彙整一週學習成果，發送到 #archive + GitHub Issue。
+當 pending improvements >= 5 時，自動建立 IDENTITY.md 優化 PR。
+
+### 週報生成
+
+```python
+# 每週日 23:30 觸發 (Kanban Bot scheduler)
+async def _generate_weekly_report(self):
+    # 1. Query insights.db: 本週 statistics
+    # 2. Query insights.db: 本週 improvements (pending + applied)
+    # 3. 生成 Markdown 報告
+    # 4. 發送 #archive Weekly Report embed
+    # 5. GitHub Issue: weekly learning report
+```
+
+### 週報格式
+
 ```markdown
-# 📊 Alkaid 學習週報 (2026-03-10 ~ 2026-03-16)
+## Weekly Learning Report — 2026-03-17 ~ 2026-03-23
 
-## 統計數據
-- 總對話數: 127
-- 錯誤次數: 18 (-25% vs 上週)
-- 用戶修正: 5 (-50% vs 上週)
-- 成功率: 85.8% (+3.2% vs 上週)
+### Statistics
+| Day | Tasks | Done | Failed | Timeout | Success Rate |
+|-----|-------|------|--------|---------|--------------|
+| Mon | 3     | 2    | 1      | 0       | 66.7%        |
+| Tue | 5     | 5    | 0      | 0       | 100%         |
+| ... |       |      |        |         |              |
+| **Total** | **21** | **18** | **2** | **1** | **85.7%** |
 
-## 本週學習成果
-- 新增規則: 3 條
-- 優化 Prompt: 1 次
-- 創建 Skill: 1 個
+### New Learnings This Week
+1. helm upgrade 前需檢查 PVC 空間 (from Task #15)
+2. Kiro CLI timeout 對大型 repo 需提高至 900s (from Task #18)
 
-## Top 改進建議
-1. SSH 連線檢查規則 (已應用，錯誤率 -80%)
-2. OpenClaw 狀態檢查 Skill (待審核)
-3. 簡化回應風格 (已應用，用戶滿意度 +15%)
+### Pending Improvements
+- [#3] rule: SSH 連線前 uptime 檢查 (score: 0.8)
+- [#5] prompt: 複雜任務先列計畫再執行 (score: 0.7)
+
+### QMD Index
+- alkaid collection: 17 → 21 files (+4)
+- 新增向量: 8
+
+### Error Rate Trend
+Week 1: 35% → Week 2: 28% → Week 3: 22% → **This Week: 14.3%**
 ```
+
+### Prompt 優化 PR
+
+```python
+# optimizer.py
+async def check_and_create_pr(self):
+    pending = db.count_pending_improvements()
+    if pending >= 5:
+        # 1. Read current IDENTITY.md
+        # 2. Build Kiro CLI prompt with pending improvements
+        # 3. Generate optimized IDENTITY.md draft
+        # 4. Create GitHub PR via API
+        # 5. Notify #alkaid
+```
+
+### 驗收標準
+- [ ] 每週日 23:30 自動生成週報
+- [ ] #archive 有 Weekly Report embed
+- [ ] GitHub Issue 週報自動建立
+- [ ] 累積 5+ pending improvements 時自動建 PR
+- [ ] PR 包含 IDENTITY.md diff 和改進理由
 
 ---
 
-## 階段 4：任務自主分解 (Week 7+)
+## Phase 4: 任務分解模板 (Week 5+)
 
 ### 目標
-識別複雜任務，自動拆解並追蹤執行
+記錄成功的複雜任務分解模式，建立模板庫，未來遇到相似任務時自動套用。
 
-### 任務清單
+### 模板記錄
 
-#### Week 7: 任務識別
-- [ ] 開發複雜任務檢測邏輯
-- [ ] 建立任務分解模板庫
-- [ ] 實現依賴關係分析
-
-**示例任務分解**：
-```yaml
-# 原始任務
-task: "優化 OpenClaw 資源使用"
-
-# 自動分解
-subtasks:
-  - id: 1
-    name: "分析當前資源使用"
-    tools: ["kubectl top pods"]
-    depends_on: []
-  
-  - id: 2
-    name: "檢查 PVC 存儲"
-    tools: ["df -h"]
-    depends_on: []
-  
-  - id: 3
-    name: "分析日誌瓶頸"
-    tools: ["kubectl logs"]
-    depends_on: [1]
-  
-  - id: 4
-    name: "生成優化建議"
-    tools: ["llm analysis"]
-    depends_on: [1, 2, 3]
-  
-  - id: 5
-    name: "執行安全優化"
-    tools: ["kubectl apply"]
-    depends_on: [4]
-```
-
-#### Week 8: 執行追蹤
-- [ ] 實現任務狀態機
-- [ ] 開發執行進度監控
-- [ ] 建立失敗重試機制
-
-**狀態轉換**：
-```
-pending → running → completed
-        ↓
-    failed → retry (3x) → permanent_failure
-```
-
-#### Week 9: 模板學習
-- [ ] 記錄成功的分解模板
-- [ ] 實現模板匹配算法
-- [ ] 測試模板重用
-
-**模板存儲**：
 ```python
-# 存入資料庫
-template = {
-    "task_type": "resource_optimization",
-    "keywords": ["優化", "資源", "性能"],
-    "subtask_template": subtasks,
-    "success_count": 5,
-    "avg_completion_time": "15min"
-}
-db.save_template(template)
+# 任務完成時記錄分解模式
+async def record_task_template(self, task, subtasks, duration):
+    template = {
+        "task_type": classify_task(task.title),
+        "keywords": extract_keywords(task.title + task.description),
+        "subtask_template": subtasks,
+        "success_count": 1,
+        "avg_completion_time": duration,
+    }
+    db.save_or_update_template(template)
 ```
+
+### 模板匹配
+
+```python
+# 新任務進來時搜尋模板
+async def find_matching_template(self, task_title):
+    # 1. QMD search in task_templates
+    # 2. Keyword matching
+    # 3. Return best match (if confidence > 0.7)
+    templates = db.search_templates(keywords)
+    if templates and templates[0].confidence > 0.7:
+        return templates[0]
+    return None
+```
+
+### 驗收標準
+- [ ] 完成的複雜任務自動記錄分解模式
+- [ ] 新任務可以搜尋到匹配的模板
+- [ ] 模板使用次數和成功率有追蹤
 
 ---
 
 ## 部署檢查清單
 
-### 生產環境部署
+### 前置條件 (全部已滿足)
+- [x] Kanban Bot 運行中 (kanban-kiro-bot.service)
+- [x] Alkaid Bot 運行中 (alkaid-bot.service)
+- [x] Kiro CLI 1.27.1 已安裝
+- [x] QMD MCP Server 運行中 (qmd-mcp.service :8181)
+- [x] GitHub PAT 已配置 (kanban-bot + alkaid-bot 共用)
+- [x] .learnings/ 目錄存在且有 error-logger + pre-check skill
+- [x] #archive 頻道已啟用歸檔功能
+- [x] 磁碟空間充足 (35GB/75GB, 49%)
 
-#### 前置檢查
-- [ ] VPS 可用內存 > 1GB
-- [ ] Python 版本 >= 3.9
-- [ ] OpenAI API Key 有效
-- [ ] Telegram Bot Token 配置正確
-- [ ] SSH Key 訪問 GitHub
+### 初始化步驟
 
-#### 安裝步驟
 ```bash
-# 1. 克隆項目
-cd ~
-git clone https://github.com/ax958888/Optimization-plan.git
-cd Optimization-plan
+# 1. 建立 learning 目錄
+mkdir -p /root/.kiro/learning/daily
 
-# 2. 安裝依賴
-pip3 install -r requirements.txt
+# 2. 初始化 insights.db
+sqlite3 /root/.kiro/learning/insights.db < schema/insights.sql
 
-# 3. 配置環境變量
-cp .env.example .env
-nano .env  # 填入 API Keys
+# 3. 修改 Kanban Bot (加入 collector + scheduler)
+# 4. 修改 Alkaid Bot (加入 digest handler)
+# 5. 重啟 Bot services
+systemctl restart kanban-kiro-bot alkaid-bot
 
-# 4. 初始化系統
-python3 scripts/setup.py
-
-# 5. 測試運行
-python3 src/analyzer.py --test
-
-# 6. 安裝定時任務
-python3 scripts/install_cron.py
-
-# 7. 驗證 cron
-crontab -l | grep "scheduler.py"
-```
-
-#### 驗證測試
-```bash
-# 測試分析器
-python3 -m pytest tests/test_analyzer.py
-
-# 測試學習器
-python3 -m pytest tests/test_learner.py
-
-# 測試優化器
-python3 -m pytest tests/test_optimizer.py
-
-# 端到端測試
-python3 tests/e2e_test.py
+# 6. 驗證
+curl http://localhost:9000/health  # Kanban webhook OK
 ```
 
 ---
 
 ## 監控與維護
 
-### 日常運維
+### 每日自動
+- 23:30: daily digest 收集 + 分析 + 學習 + #archive embed
 
-#### 每日檢查
-```bash
-# 查看今日分析日誌
-tail -f ~/.kiro/learning/logs/daily_$(date +%Y%m%d).log
+### 每週自動 (週日)
+- 23:30: weekly report + GitHub Issue
 
-# 檢查待審核建議數
-python3 src/learner.py --count-pending
-
-# 查看資料庫大小
-du -h ~/.kiro/learning/insights.db
-```
-
-#### 每週檢查
-```bash
-# 查看本週統計
-python3 src/scheduler.py --mode weekly --dry-run
-
-# 檢查 GitHub PR 狀態
-python3 src/optimizer.py --list-prs
-
-# 清理舊日誌（保留 30 天）
-find ~/.kiro/learning/logs -mtime +30 -delete
-```
-
-#### 每月維護
+### 每月手動
 ```bash
 # 資料庫優化
-sqlite3 ~/.kiro/learning/insights.db "VACUUM;"
+sqlite3 /root/.kiro/learning/insights.db "VACUUM;"
 
-# 備份資料庫
-cp ~/.kiro/learning/insights.db ~/.kiro/learning/backups/insights_$(date +%Y%m).db
+# 清理 30 天前的 daily digest JSON
+find /root/.kiro/learning/daily -name "*.json" -mtime +30 -delete
 
-# 生成月度報告
-python3 src/scheduler.py --mode monthly-report
-```
-
----
-
-## 故障排除
-
-### 常見問題
-
-#### Q1: OpenAI API 超時
-```bash
-# 檢查網絡連接
-curl -I https://api.openai.com
-
-# 增加超時時間
-export OPENAI_TIMEOUT=60
-
-# 或在代碼中配置
-client = OpenAI(timeout=60.0)
-```
-
-#### Q2: 資料庫鎖定錯誤
-```bash
-# 檢查是否有多個進程同時寫入
-ps aux | grep scheduler.py
-
-# 殺死舊進程
-pkill -f scheduler.py
-
-# 清理資料庫鎖
-rm -f ~/.kiro/learning/insights.db-wal
-rm -f ~/.kiro/learning/insights.db-shm
-```
-
-#### Q3: Telegram 通知失敗
-```bash
-# 測試 Bot Token
-curl -X POST https://api.telegram.org/bot<TOKEN>/getMe
-
-# 測試發送消息
-python3 src/notifier.py --test
-
-# 檢查 Chat ID
-python3 src/notifier.py --get-chat-id
-```
-
-#### Q4: Cron 任務未執行
-```bash
-# 檢查 cron 服務狀態
-systemctl status cron
-
-# 查看 cron 日誌
-grep CRON /var/log/syslog | tail -20
-
-# 手動測試執行
-/usr/bin/python3 ~/.kiro/learning/src/scheduler.py --mode daily
-```
-
----
-
-## 性能調優
-
-### 優化建議
-
-#### 1. 減少 LLM 調用次數
-```python
-# 批次處理（10 條錯誤一次分析）
-for batch in chunk(errors, size=10):
-    insights = learner.analyze_batch(batch)
-```
-
-#### 2. 啟用 Embedding 緩存
-```python
-from functools import lru_cache
-
-@lru_cache(maxsize=256)
-def get_embedding(text: str):
-    return openai.embeddings.create(input=text)
-```
-
-#### 3. 資料庫索引優化
-```sql
--- 創建複合索引
-CREATE INDEX idx_errors_ts_status ON errors(timestamp, status);
-CREATE INDEX idx_improvements_status_score ON improvements(status, impact_score DESC);
-```
-
-#### 4. 增量分析
-```python
-# 只分析上次運行後的新對話
-last_run = db.get_last_run_timestamp()
-new_conversations = read_since(last_run)
+# 檢查 QMD 索引大小
+qmd list
 ```
 
 ---
 
 ## 成功指標
 
-### KPI 定義
-
-| 指標 | 目標值 | 測量方法 |
-|------|--------|---------|
-| **錯誤率下降** | 首月 -15% | `SELECT COUNT(*) FROM errors WHERE date > ?` |
-| **響應準確度** | 每週 +2% | 用戶反饋 + 修正次數 |
-| **重複任務時間** | -30% | 對比同類任務執行時間 |
-| **LLM 成本** | < $2/天 | OpenAI API 使用統計 |
-| **系統可用性** | > 99% | Cron 任務成功率 |
-
-### 數據收集
-
-```python
-# 每日統計
-stats = {
-    'date': today,
-    'total_conversations': count_conversations(),
-    'error_count': count_errors(),
-    'correction_count': count_corrections(),
-    'success_rate': calculate_success_rate(),
-    'llm_cost': get_openai_cost()
-}
-db.save_statistics(stats)
-```
-
-### 報表生成
-
-```bash
-# 生成 30 天趨勢圖
-python3 src/analytics.py --report monthly --output report.png
-```
-
----
-
-## 下一步規劃
-
-### 未來功能
-
-#### Phase 5: 多 Agent 協作
-- 與 OpenClaw 其他 Agents（Astra, Lumix, Vera, Blaze, Forge）共享學習成果
-- 建立中央學習資料庫
-- 實現跨 Agent 知識遷移
-
-#### Phase 6: 強化學習
-- 引入獎勵機制（用戶點讚 = +1，修正 = -1）
-- 實現 A/B 測試（兩種 Prompt 對比）
-- 自動選擇最優策略
-
-#### Phase 7: 預測性維護
-- 預測可能出現的錯誤
-- 主動發送警告通知
-- 自動執行預防措施
-
----
-
-**本實施計劃支持靈活調整，可根據實際情況調整優先級和時間線。**
+| 指標 | 首月目標 | 三月目標 |
+|------|----------|----------|
+| 錯誤率下降 | -15% | -40% |
+| 重複任務耗時 | -20% | -40% |
+| QMD 知識量 | +20 files | +60 files |
+| .learnings/ 條目 | +10 | +30 |
+| 週報連續產出 | 4 週 | 12 週 |
